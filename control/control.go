@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -20,6 +21,8 @@ const (
 	resultDir = "./runtime/result_xml/"
 )
 
+var rw sync.RWMutex
+var wg sync.WaitGroup
 // 多个手机控制
 var Controls = map[string]*Control{}
 
@@ -50,12 +53,20 @@ func initControls() {
 	log.Printf("共有%d台设备连接", len(serials))
 
 	for _, serial := range serials {
+		wg.Add(1)
 		deviceDescriptor := adb.DeviceWithSerial(serial)
-		Controls[serial], err = NewControl(client.Device(deviceDescriptor), serial)
-		if err != nil {
-			fatal("NewControl:", err)
-		}
+		go func(serial string) {
+			defer wg.Done()
+			v, err := NewControl(client.Device(deviceDescriptor), serial)
+			rw.Lock()
+			Controls[serial] = v
+			rw.Unlock()
+			if err != nil {
+				fatal("NewControl:", "serial", err)
+			}
+		}(serial)
 	}
+	wg.Wait()
 }
 
 // 手机控制结构体
@@ -77,9 +88,9 @@ type Control struct {
 
 func NewControl(adb *adb.Device, serial string) (*Control, error) {
 	device := &Control{
-		Device:       adb,
-		deviceSerial: serial,
-		WaitResultDuration: 200 * time.Millisecond,
+		Device:                   adb,
+		deviceSerial:             serial,
+		WaitResultDuration:       200 * time.Millisecond,
 		WaitSearchButtonDuration: 100 * time.Millisecond,
 	}
 	return device, device.initPosition()
